@@ -43,6 +43,9 @@ create_commitment ──► fund_escrow ──► release            (matured: p
 | `dispute(commitment_id, caller, reason)` | Freeze a funded commitment pending admin resolution. |
 | `resolve_dispute(commitment_id, release_to_owner)` | Admin-only settlement of a disputed commitment. |
 | `record_attestation(commitment_id, attestor, compliance_score)` | Record a 0–100 compliance score. |
+| `pause()` | Admin-only emergency pause for write operations. |
+| `unpause()` | Admin-only resume for paused contract writes. |
+| `is_paused()` | Read the current paused state. |
 | `get_commitment(commitment_id)` | Read a single commitment record. |
 | `get_owner_commitments(owner)` | List commitment ids owned by an address. |
 
@@ -59,7 +62,7 @@ Stable numeric error codes (`#[contracterror]`) are surfaced so the backend
 `normalizeContractError` mapper can translate them into HTTP responses:
 `AlreadyInitialized`, `NotInitialized`, `NotFound`, `Unauthorized`,
 `InvalidAmount`, `InvalidState`, `NotMatured`, `InvalidDuration`,
-`PenaltyTooHigh`.
+`PenaltyTooHigh`, `Paused`.
 
 ## Build & test
 
