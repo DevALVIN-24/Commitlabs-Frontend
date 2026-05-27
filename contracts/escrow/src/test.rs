@@ -162,6 +162,53 @@ fn release_before_maturity_fails() {
 }
 
 #[test]
+fn pause_blocks_create_fund_and_refund_but_allows_release() {
+    let f = setup();
+    let owner = Address::generate(&f.env);
+    fund_owner(&f, &owner, 1_000);
+
+    let id = f
+        .client
+        .create_commitment(&owner, &f.asset, &1_000, &RiskProfile::Balanced, &30, &300);
+    f.client.fund_escrow(&id);
+
+    // Pause contract writes.
+    f.client.pause();
+    assert!(f.client.is_paused());
+
+    assert_eq!(f.client.try_refund(&id), Err(Ok(Error::Paused)));
+
+    // New writes are blocked while paused.
+    let other = Address::generate(&f.env);
+    let create_res = f.client.try_create_commitment(&other, &f.asset, &1_000, &RiskProfile::Safe, &30, &200);
+    assert_eq!(create_res, Err(Ok(Error::Paused)));
+
+    let fund_res = f.client.try_fund_escrow(&id);
+    assert_eq!(fund_res, Err(Ok(Error::Paused)));
+
+    // Mature release remains available while paused.
+    f.env.ledger().set_timestamp(31 * 86_400);
+    let paid = f.client.release(&id, &owner);
+    assert_eq!(paid, 1_000);
+    assert_eq!(f.client.get_commitment(&id).status, EscrowStatus::Released);
+
+    // Admin can unpause and normal writes resume.
+    f.client.unpause();
+    assert!(!f.client.is_paused());
+}
+
+#[test]
+fn pause_can_be_toggled_by_admin() {
+    let f = setup();
+
+    f.client.pause();
+    assert!(f.client.is_paused());
+
+    f.client.unpause();
+    assert!(!f.client.is_paused());
+}
+
+#[test]
 fn refund_applies_penalty_to_fee_recipient() {
     let f = setup();
     let owner = Address::generate(&f.env);

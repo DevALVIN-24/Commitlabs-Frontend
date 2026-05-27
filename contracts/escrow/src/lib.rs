@@ -133,6 +133,8 @@ pub enum Error {
     NotMatured = 7,
     InvalidDuration = 8,
     PenaltyTooHigh = 9,
+    /// Contract is currently paused for emergency halt.
+    Paused = 10,
 }
 
 /// Result of an early exit commitment.
@@ -208,6 +210,44 @@ impl EscrowContract {
         Ok(())
     }
 
+    /// Pause contract writes. Admin only.
+    pub fn pause(env: Env) -> Result<(), Error> {
+        Self::require_init(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::Paused, &true);
+        env.events()
+            .publish((Symbol::new(&env, "pause"), admin), ());
+        Ok(())
+    }
+
+    /// Resume contract writes after an emergency pause. Admin only.
+    pub fn unpause(env: Env) -> Result<(), Error> {
+        Self::require_init(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::Paused, &false);
+        env.events()
+            .publish((Symbol::new(&env, "unpause"), admin), ());
+        Ok(())
+    }
+
+    /// Return whether the contract is currently paused.
+    pub fn is_paused(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+    }
+
     /// Create a new (unfunded) commitment escrow. Returns the new commitment id.
     ///
     /// `duration_days` is converted to an absolute maturity timestamp using the
@@ -223,6 +263,7 @@ impl EscrowContract {
         penalty_bps: u32,
     ) -> Result<u64, Error> {
         Self::require_init(&env)?;
+        Self::require_not_paused(&env)?;
         owner.require_auth();
 
         if amount <= 0 {
@@ -336,6 +377,7 @@ impl EscrowContract {
     /// commitment from `Created` to `Funded`.
     pub fn fund_escrow(env: Env, commitment_id: u64) -> Result<(), Error> {
         Self::require_init(&env)?;
+        Self::require_not_paused(&env)?;
         let mut c = Self::load(&env, commitment_id)?;
         c.owner.require_auth();
 
@@ -623,6 +665,20 @@ impl EscrowContract {
             .unwrap_or(0);
         env.storage().instance().set(&DataKey::NextId, &(id + 1));
         id
+    }
+
+    fn is_paused(env: &Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+    }
+
+    fn require_not_paused(env: &Env) -> Result<(), Error> {
+        if Self::is_paused(env) {
+            return Err(Error::Paused);
+        }
+        Ok(())
     }
 
     fn load(env: &Env, id: u64) -> Result<Commitment, Error> {
