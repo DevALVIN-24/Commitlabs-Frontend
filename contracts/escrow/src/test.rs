@@ -207,3 +207,41 @@ fn owner_index_tracks_commitments() {
     assert_eq!(ids.get(0).unwrap(), a);
     assert_eq!(ids.get(1).unwrap(), b);
 }
+
+#[test]
+fn fund_escrow_succeeds_when_asset_matches_token() {
+    let f = setup();
+    let owner = Address::generate(&f.env);
+    fund_owner(&f, &owner, 500);
+    // f.asset is the configured escrow token — should succeed.
+    let id = f
+        .client
+        .create_commitment(&owner, &f.asset, &500, &RiskProfile::Safe, &30, &200);
+    f.client.fund_escrow(&id);
+    assert_eq!(f.client.get_commitment(&id).status, EscrowStatus::Funded);
+    assert_eq!(f.token.balance(&owner), 0);
+}
+
+#[test]
+fn fund_escrow_rejects_mismatched_asset() {
+    let f = setup();
+    let owner = Address::generate(&f.env);
+    fund_owner(&f, &owner, 500);
+
+    // Deploy a second, different SAC token.
+    let other_issuer = Address::generate(&f.env);
+    let other_sac = f.env.register_stellar_asset_contract_v2(other_issuer);
+    let other_asset = other_sac.address();
+
+    // Create a commitment whose asset differs from the configured escrow token.
+    let id = f.client.create_commitment(
+        &owner,
+        &other_asset,
+        &500,
+        &RiskProfile::Safe,
+        &30,
+        &200,
+    );
+    let res = f.client.try_fund_escrow(&id);
+    assert_eq!(res, Err(Ok(Error::AssetMismatch)));
+}

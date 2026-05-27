@@ -59,7 +59,15 @@ Stable numeric error codes (`#[contracterror]`) are surfaced so the backend
 `normalizeContractError` mapper can translate them into HTTP responses:
 `AlreadyInitialized`, `NotInitialized`, `NotFound`, `Unauthorized`,
 `InvalidAmount`, `InvalidState`, `NotMatured`, `InvalidDuration`,
-`PenaltyTooHigh`.
+`PenaltyTooHigh`, `AssetMismatch`.
+
+### Multi-asset validation
+
+`fund_escrow` validates that the `asset` field stored on the commitment matches
+the contract-level escrow token configured during `initialize`. If they differ,
+the call is rejected with `AssetMismatch` (error code `10`) before any token
+transfer occurs. This prevents a commitment created with an arbitrary asset
+address from draining the wrong token from the owner's account.
 
 ## Build & test
 

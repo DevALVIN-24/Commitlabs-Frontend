@@ -96,6 +96,8 @@ pub enum Error {
     NotMatured = 7,
     InvalidDuration = 8,
     PenaltyTooHigh = 9,
+    /// The commitment's `asset` does not match the configured escrow token.
+    AssetMismatch = 10,
 }
 
 const MAX_PENALTY_BPS: u32 = 10_000;
@@ -192,6 +194,16 @@ impl EscrowContract {
 
         if c.status != EscrowStatus::Created {
             return Err(Error::InvalidState);
+        }
+
+        // Validate that the commitment's asset matches the configured escrow token.
+        let configured_token: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Token)
+            .ok_or(Error::NotInitialized)?;
+        if c.asset != configured_token {
+            return Err(Error::AssetMismatch);
         }
 
         let token = Self::token_client(&env);
