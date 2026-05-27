@@ -226,7 +226,16 @@ impl EscrowContract {
 
         let id = Self::next_id(&env);
         let now = env.ledger().timestamp();
-        let maturity = now + (duration_days as u64) * SECONDS_PER_DAY;
+
+        // Guard against overflow when converting duration_days into an absolute
+        // maturity timestamp. Overflow must never wrap, otherwise commitments
+        // could be released/refunded at incorrect times.
+        let duration_seconds = (duration_days as u64)
+            .checked_mul(SECONDS_PER_DAY)
+            .ok_or(Error::InvalidDuration)?;
+        let maturity = now
+            .checked_add(duration_seconds)
+            .ok_or(Error::InvalidDuration)?;
 
         let commitment = Commitment {
             id,
