@@ -74,3 +74,40 @@ stellar contract build
 
 > Note: this workspace is scaffolded to ground the contract issue backlog.
 > Verify a local toolchain before deploying to testnet/mainnet.
+
+## Code style & linting
+
+The workspace enforces consistent formatting via `rustfmt` and a curated clippy
+lint set defined in `contracts/rustfmt.toml` and `contracts/Cargo.toml`
+(`[workspace.lints.clippy]`). All contract crates inherit these lints via
+`[lints] workspace = true` in their `Cargo.toml`.
+
+Run the following from the `contracts/` directory before opening a PR:
+
+```bash
+# Format all crates in the workspace
+cargo fmt --all
+
+# Lint check (warnings are treated as errors in CI)
+cargo clippy --all-targets -- -D warnings
+
+# Check formatting without modifying files
+cargo fmt --all -- --check
+```
+
+Enabled lint groups (`warn` level):
+
+| Group | Purpose |
+| --- | --- |
+| `clippy::all` | Core correctness, style, complexity, and performance lints |
+| `clippy::pedantic` | Stricter idiom enforcement (e.g. prefer `u64::from` over `as u64`) |
+
+Lints explicitly allowed for Soroban compatibility:
+
+| Lint | Reason |
+| --- | --- |
+| `clippy::module_name_repetitions` | Contract type names intentionally repeat the module prefix |
+| `clippy::missing_errors_doc` | `#[contracterror]` types are self-documenting via stable numeric codes |
+| `clippy::missing_panics_doc` | Soroban panics trap the VM rather than unwinding |
+| `clippy::must_use_candidate` | Contract return values are consumed by the host environment |
+| `clippy::wildcard_imports` | `use super::*` is idiomatic in Soroban `#[cfg(test)]` modules |

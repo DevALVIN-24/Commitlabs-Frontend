@@ -156,7 +156,7 @@ impl EscrowContract {
 
         let id = Self::next_id(&env);
         let now = env.ledger().timestamp();
-        let maturity = now + (duration_days as u64) * SECONDS_PER_DAY;
+        let maturity = now + u64::from(duration_days) * SECONDS_PER_DAY;
 
         let commitment = Commitment {
             id,
@@ -246,7 +246,7 @@ impl EscrowContract {
             return Err(Error::InvalidState);
         }
 
-        let penalty = (c.amount * c.penalty_bps as i128) / MAX_PENALTY_BPS as i128;
+        let penalty = (c.amount * i128::from(c.penalty_bps)) / i128::from(MAX_PENALTY_BPS);
         let refund_amount = c.amount - penalty;
 
         let token = Self::token_client(&env);
@@ -326,7 +326,7 @@ impl EscrowContract {
             c.status = EscrowStatus::Released;
             paid = c.amount;
         } else {
-            let penalty = (c.amount * c.penalty_bps as i128) / MAX_PENALTY_BPS as i128;
+            let penalty = (c.amount * i128::from(c.penalty_bps)) / i128::from(MAX_PENALTY_BPS);
             paid = c.amount - penalty;
             token.transfer(&contract, &c.owner, &paid);
             c.status = EscrowStatus::Refunded;
@@ -351,7 +351,7 @@ impl EscrowContract {
         Self::require_init(&env)?;
         attestor.require_auth();
         let mut c = Self::load(&env, commitment_id)?;
-        let score = if compliance_score > 100 { 100 } else { compliance_score };
+        let score = compliance_score.min(100);
         c.compliance_score = score;
         Self::save(&env, &c);
         env.events().publish(
