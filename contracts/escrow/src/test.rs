@@ -329,26 +329,6 @@ fn owner_index_tracks_commitments() {
 }
 
 #[test]
-<<<<<<< feature/reentrancy-safe-transfers
-fn resolve_dispute_against_owner_applies_penalty() {
-    let f = setup();
-    let owner = Address::generate(&f.env);
-    fund_owner(&f, &owner, 1_000);
-    // 5% penalty.
-    let id = f
-        .client
-        .create_commitment(&owner, &f.asset, &1_000, &RiskProfile::Aggressive, &30, &500);
-    f.client.fund_escrow(&id);
-
-    f.client
-        .dispute(&id, &owner, &String::from_str(&f.env, "value mismatch"));
-        
-    let paid = f.client.resolve_dispute(&id, &false);
-    assert_eq!(paid, 950);
-    assert_eq!(f.token.balance(&owner), 950);
-    assert_eq!(f.token.balance(&f.fee_recipient), 50);
-    assert_eq!(f.client.get_commitment(&id).status, EscrowStatus::Refunded);
-=======
 fn dispute_categorizes_value_mismatch() {
     let f = setup();
     let owner = Address::generate(&f.env);
@@ -876,5 +856,4 @@ fn explicit_penalty_override_zero_is_valid() {
     f.client.fund_escrow(&id);
     let refunded = f.client.refund(&id);
     assert_eq!(refunded, 1_000); // No penalty deducted
->>>>>>> master
 }
