@@ -95,9 +95,64 @@ interface ContractInvocationResult {
 }
 
 const ANALYTICS_SCALE = 100;
+const DEFAULT_RPC_TIMEOUT_MS = 30_000;
 
 function getRpcUrl(): string {
   return getBackendConfig().sorobanRpcUrl;
+}
+
+function getRpcTimeoutMs(): number {
+  const raw = process.env.SOROBAN_RPC_TIMEOUT_MS;
+  if (!raw) return DEFAULT_RPC_TIMEOUT_MS;
+  const parsed = parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_RPC_TIMEOUT_MS;
+}
+
+/**
+ * Races a Soroban RPC promise against an AbortSignal so that a controller-
+ * level timeout can cancel all in-flight RPC work simultaneously.  When the
+ * signal fires before the promise settles the rejection is mapped to a
+ * GATEWAY_TIMEOUT BackendError with retryable: true.
+ *
+ * For write calls the timeout may fire after sendTransaction has already
+ * broadcast the transaction; callers must treat GATEWAY_TIMEOUT responses as
+ * "outcome unknown" and advise the user to verify on-chain using the txHash
+ * surfaced in the error details.
+ */
+function abortableRpc<T>(
+  call: Promise<T>,
+  signal: AbortSignal,
+  methodName: string,
+  timeoutMs: number,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () =>
+      reject(
+        normalizeContractError(new Error("aborted"), {
+          code: "GATEWAY_TIMEOUT",
+          message: `Soroban RPC timed out after ${timeoutMs}ms for ${methodName}. The operation may still be processing on-chain.`,
+          status: 504,
+          details: { methodName, timeoutMs, retryable: true },
+        }),
+      );
+
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    call.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
 }
 
 function getNetworkPassphrase(): string {
@@ -420,58 +475,98 @@ async function invokeContractMethod(
     });
   }
 
-  const server = getSorobanServer();
-  const contract = new Contract(contractId);
-  const account =
-    mode === "write"
-      ? await server.getAccount(sourcePublicKey)
-      : new Account(sourcePublicKey, "0");
-  const operation = contract.call(
-    methodName,
-    ...params.map((value) => nativeToScVal(value)),
-  );
+  const timeoutMs = getRpcTimeoutMs();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  const tx = new TransactionBuilder(account, {
-    fee: String(BASE_FEE),
-    networkPassphrase: getNetworkPassphrase(),
-  })
-    .addOperation(operation)
-    .setTimeout(30)
-    .build();
+  try {
+    const server = getSorobanServer();
+    const contract = new Contract(contractId);
+    const account =
+      mode === "write"
+        ? await abortableRpc(
+            server.getAccount(sourcePublicKey),
+            controller.signal,
+            methodName,
+            timeoutMs,
+          )
+        : new Account(sourcePublicKey, "0");
 
-  const simulation = await server.simulateTransaction(tx);
-  if (SorobanRpc.Api.isSimulationError(simulation)) {
-    throw normalizeContractError(new Error(simulation.error), {
-      code: "BLOCKCHAIN_CALL_FAILED",
-      message: `Soroban simulation failed for ${methodName}.`,
-      status: 502,
-      details: { methodName },
-    });
+    const operation = contract.call(
+      methodName,
+      ...params.map((value) => nativeToScVal(value)),
+    );
+
+    const tx = new TransactionBuilder(account, {
+      fee: String(BASE_FEE),
+      networkPassphrase: getNetworkPassphrase(),
+    })
+      .addOperation(operation)
+      .setTimeout(30)
+      .build();
+
+    const simulation = await abortableRpc(
+      server.simulateTransaction(tx),
+      controller.signal,
+      methodName,
+      timeoutMs,
+    );
+
+    if (SorobanRpc.Api.isSimulationError(simulation)) {
+      throw normalizeContractError(new Error(simulation.error), {
+        code: "BLOCKCHAIN_CALL_FAILED",
+        message: `Soroban simulation failed for ${methodName}.`,
+        status: 502,
+        details: { methodName },
+      });
+    }
+
+    if (mode === "read") {
+      return {
+        value: simulation.result ? scValToNative(simulation.result.retval) : null,
+      };
+    }
+
+    const sourceKeypair = getSourceKeypair();
+    if (!sourceKeypair) {
+      throw new BackendError({
+        code: "BLOCKCHAIN_UNAVAILABLE",
+        message: "Missing SOROBAN_SERVER_SECRET_KEY for write contract calls.",
+        status: 500,
+        details: { methodName },
+      });
+    }
+
+    const preparedTx = await abortableRpc(
+      server.prepareTransaction(tx),
+      controller.signal,
+      methodName,
+      timeoutMs,
+    );
+    preparedTx.sign(sourceKeypair);
+
+    const sendResult = await abortableRpc(
+      server.sendTransaction(preparedTx),
+      controller.signal,
+      methodName,
+      timeoutMs,
+    );
+    const txHash = sendResult.hash;
+
+    // waitForTransactionResult has its own internal polling loop; we race it
+    // against the same abort signal so a slow confirmation also times out.
+    // A GATEWAY_TIMEOUT here means the tx was broadcast — callers should
+    // surface the txHash so users can verify the outcome on-chain.
+    const onChainValue = await abortableRpc(
+      waitForTransactionResult(server, txHash),
+      controller.signal,
+      methodName,
+      timeoutMs,
+    );
+    return { value: onChainValue, txHash };
+  } finally {
+    clearTimeout(timer);
   }
-
-  if (mode === "read") {
-    return {
-      value: simulation.result ? scValToNative(simulation.result.retval) : null,
-    };
-  }
-
-  const sourceKeypair = getSourceKeypair();
-  if (!sourceKeypair) {
-    throw new BackendError({
-      code: "BLOCKCHAIN_UNAVAILABLE",
-      message: "Missing SOROBAN_SERVER_SECRET_KEY for write contract calls.",
-      status: 500,
-      details: { methodName },
-    });
-  }
-
-  const preparedTx = await server.prepareTransaction(tx);
-  preparedTx.sign(sourceKeypair);
-  const sendResult = await server.sendTransaction(preparedTx);
-  const txHash = sendResult.hash;
-
-  const onChainValue = await waitForTransactionResult(server, txHash);
-  return { value: onChainValue, txHash };
 }
 
 function validateOwnerAddress(ownerAddress: string): void {
