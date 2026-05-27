@@ -171,6 +171,121 @@ paths:
         '429':
           $ref: '#/components/responses/RateLimited'
 
+  /api/commitments/search:
+    get:
+      summary: Search Commitments
+      description: >
+        Search and filter commitments by asset, status, and risk type with
+        stable sorting and pagination. Mirrors the marketplace filtering contract.
+      parameters:
+        - name: ownerAddress
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Stellar address of the commitment owner.
+        - name: asset
+          in: query
+          schema:
+            type: string
+          description: Filter by asset code (e.g. XLM, USDC). Case-insensitive.
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [ACTIVE, SETTLED, VIOLATED, EARLY_EXIT]
+          description: Filter by commitment status.
+        - name: riskType
+          in: query
+          schema:
+            type: string
+            enum: [Safe, Balanced, Aggressive]
+          description: Filter by risk type.
+        - name: minCompliance
+          in: query
+          schema:
+            type: number
+            minimum: 0
+            maximum: 100
+          description: Minimum compliance score (0–100).
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            default: 10
+            minimum: 1
+            maximum: 100
+        - name: sortBy
+          in: query
+          schema:
+            type: string
+            enum: [createdAt, amount, complianceScore, status, asset]
+            default: createdAt
+        - name: sortOrder
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        '200':
+          description: Filtered and paginated list of commitments.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          data:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                commitmentId: { type: string }
+                                ownerAddress: { type: string }
+                                asset: { type: string }
+                                amount: { type: string }
+                                status: { type: string }
+                                riskType: { type: string }
+                                complianceScore: { type: number }
+                                currentValue: { type: string }
+                                feeEarned: { type: string }
+                                violationCount: { type: integer }
+                                createdAt: { type: string }
+                                expiresAt: { type: string }
+                          meta:
+                            type: object
+                            properties:
+                              page: { type: integer }
+                              pageSize: { type: integer }
+                              total: { type: integer }
+                              totalPages: { type: integer }
+                              hasNextPage: { type: boolean }
+                              hasPrevPage: { type: boolean }
+                          filters:
+                            type: object
+                            properties:
+                              asset: { type: string, nullable: true }
+                              status: { type: string, nullable: true }
+                              riskType: { type: string, nullable: true }
+                              minCompliance: { type: number, nullable: true }
+                              sortBy: { type: string }
+                              sortOrder: { type: string }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
   /api/commitments/{id}/settle:
     post:
       summary: Settle Commitment

@@ -64,6 +64,77 @@ Clients should wait the indicated seconds before retrying. See [error-handling.m
 
 ---
 
+## `GET /api/commitments/search`
+
+Searches and filters commitments with rich query parameters. Supports filtering
+by asset, `CommitmentStatus`, and risk type, with stable sorting and pagination
+via the `pagination.ts` utilities. Common queries are cached with a short TTL
+(15 s) for performance.
+
+- **Query parameters**:
+    - `ownerAddress`: (string, **required**) The Stellar address of the owner.
+    - `asset`: (string, optional) Filter by asset code (e.g. "XLM", "USDC"). Case-insensitive.
+    - `status`: (enum, optional) Filter by commitment status. Values: `ACTIVE`, `SETTLED`, `VIOLATED`, `EARLY_EXIT`.
+    - `riskType`: (enum, optional) Filter by risk type. Values: `Safe`, `Balanced`, `Aggressive`.
+    - `minCompliance`: (number, optional) Minimum compliance score (0–100).
+    - `page`: (integer, optional, default: 1) Page number.
+    - `pageSize`: (integer, optional, default: 10, max: 100) Items per page.
+    - `sortBy`: (enum, optional, default: `createdAt`) Sort field. Values: `createdAt`, `amount`, `complianceScore`, `status`, `asset`.
+    - `sortOrder`: (enum, optional, default: `desc`) Sort direction. Values: `asc`, `desc`.
+
+- **Response**:
+    - `200 OK`: Filtered, sorted, and paginated list of commitments.
+    - `400 Bad Request`: Invalid filter or pagination parameters.
+    - `429 Too Many Requests`: Rate limit exceeded.
+
+### Example
+
+```bash
+curl "http://localhost:3000/api/commitments/search?ownerAddress=GABC...&asset=USDC&status=ACTIVE&sortBy=amount&sortOrder=desc&page=1&pageSize=10"
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "data": [
+      {
+        "commitmentId": "c4",
+        "ownerAddress": "GABC...",
+        "asset": "USDC",
+        "amount": "8000",
+        "status": "ACTIVE",
+        "riskType": "Safe",
+        "complianceScore": 99,
+        "currentValue": "8200",
+        "feeEarned": "15",
+        "violationCount": 0,
+        "createdAt": "2026-04-01T00:00:00.000Z",
+        "expiresAt": "2026-10-01T00:00:00.000Z"
+      }
+    ],
+    "meta": {
+      "page": 1,
+      "pageSize": 10,
+      "total": 1,
+      "totalPages": 1,
+      "hasNextPage": false,
+      "hasPrevPage": false
+    },
+    "filters": {
+      "asset": "USDC",
+      "status": "ACTIVE",
+      "riskType": null,
+      "minCompliance": null,
+      "sortBy": "amount",
+      "sortOrder": "desc"
+    }
+  }
+}
+```
+
+---
+
 ## `POST /api/commitments`
 
 Creates a new commitment on the Stellar network.
