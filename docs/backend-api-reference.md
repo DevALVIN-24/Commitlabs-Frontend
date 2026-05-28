@@ -1,11 +1,11 @@
 # Backend API Reference
 
 This document describes the HTTP API surface exposed by the frontend backend
-(`src/app/api`).  The routes are intentionally thin stubs in the current code
+(`src/app/api`). The routes are intentionally thin stubs in the current code
 base; they exist primarily for analytics hooks and development/testing.
 
 Each entry includes the HTTP method, path, expected request body (if any), and
-an example response.  All endpoints return JSON.
+an example response. All endpoints return JSON.
 
 ## CORS Summary
 
@@ -41,7 +41,7 @@ All endpoints follow these conventions.
   "error": {
     "code": "TOO_MANY_REQUESTS",
     "message": "Too many requests. Please try again later.",
-    "retryAfterSeconds": 60  // present on 429 and 503 only
+    "retryAfterSeconds": 60 // present on 429 and 503 only
   }
 }
 ```
@@ -55,10 +55,10 @@ HTTP/1.1 429 Too Many Requests
 Retry-After: 60
 ```
 
-| Status | `retryAfterSeconds` default | Meaning |
-|--------|---------------------------|---------|
-| 429 | 60 s | Client exceeded rate limit |
-| 503 | 30 s | Service temporarily unavailable |
+| Status | `retryAfterSeconds` default | Meaning                         |
+| ------ | --------------------------- | ------------------------------- |
+| 429    | 60 s                        | Client exceeded rate limit      |
+| 503    | 30 s                        | Service temporarily unavailable |
 
 Clients should wait the indicated seconds before retrying. See [error-handling.md](./error-handling.md) for the full client retry strategy (exponential backoff + jitter).
 
@@ -109,18 +109,18 @@ curl -X POST http://localhost:3000/api/marketplace/listings/listing_1/purchase \
 Creates a new commitment on the Stellar network.
 
 - **Headers**:
-    - `Idempotency-Key`: (Optional) A unique string to identify the request and prevent duplicate processing. Recommended for safe retries.
+  - `Idempotency-Key`: (Optional) A unique string to identify the request and prevent duplicate processing. Recommended for safe retries.
 - **Request body**:
-    - `ownerAddress`: (string, required) The Stellar address of the owner.
-    - `asset`: (string, required) The asset code.
-    - `amount`: (string, required) The amount to commit.
-    - `durationDays`: (number, required) The duration of the commitment in days.
-    - `maxLossBps`: (number, required) Maximum loss in basis points.
-    - `metadata`: (object, optional) Additional metadata.
+  - `ownerAddress`: (string, required) The Stellar address of the owner.
+  - `asset`: (string, required) The asset code.
+  - `amount`: (string, required) The amount to commit.
+  - `durationDays`: (number, required) The duration of the commitment in days.
+  - `maxLossBps`: (number, required) Maximum loss in basis points.
+  - `metadata`: (object, optional) Additional metadata.
 - **Response**:
-    - `201 Created`: The commitment was successfully created.
-    - `409 Conflict`: A request with the same `Idempotency-Key` is already in progress.
-    - `429 Too Many Requests`: Rate limit exceeded.
+  - `201 Created`: The commitment was successfully created.
+  - `409 Conflict`: A request with the same `Idempotency-Key` is already in progress.
+  - `429 Too Many Requests`: Rate limit exceeded.
 
 ### Example
 
@@ -141,7 +141,8 @@ curl -X POST http://localhost:3000/api/commitments \
 
 ## `POST /api/commitments/[id]/settle`
 
-Marks the commitment identified by `id` as settled.  Currently a stub that emits `CommitmentSettled` events.
+Marks the commitment identified by `id` as settled. Currently a stub that emits
+`CommitmentSettled` events.
 
 - **Path parameter**: `id` (string)
 - **Headers**:
@@ -201,28 +202,155 @@ curl -X POST http://localhost:3000/api/commitments/abc123/fund \
 
 ## `POST /api/commitments/[id]/early-exit`
 
-Triggers an early exit (with penalty) for the named commitment.  Emits `CommitmentEarlyExit` events.
+Executes an early exit from an active commitment. The caller must be authenticated
+via session cookie and must own the commitment. The route validates the request body,
+verifies ownership, and invokes the blockchain contract to process the early exit with
+applicable penalties.
 
-- **Path parameter**: `id` (string)
-- **Headers**:
-    - `Idempotency-Key`: (Optional) A unique string to identify the request and prevent duplicate processing. Replayed requests within the 24-hour replay window return the original prior result.
-- **Request body**: optional JSON with penalty or reason.
-- **Response**: stub message.
+### Authentication & Authorization
 
-### Example
+- **Required**: Session cookie with valid authentication token.
+- **Ownership Check**: The `callerAddress` in the request body must match:
+  1. The authenticated user's address (from the session).
+  2. The actual owner of the commitment on-chain.
+- **Returns**:
+  - `401 UNAUTHORIZED` if no valid session token.
+  - `403 FORBIDDEN` if addresses do not match or caller does not own the commitment.
 
-```bash
-curl -X POST http://localhost:3000/api/commitments/abc123/early-exit \
-     -H 'Content-Type: application/json' \
-     -d '{"reason":"user-request"}'
+### Request
+
+**Path parameter**: `id` (string) — The commitment ID to exit early.
+
+**Headers**:
+- `Idempotency-Key`: Optional. Replayed requests within the 24-hour replay window return the original prior result.
+- `Cookie`: Required session cookie with valid token.
+- `Content-Type`: `application/json`
+
+**Body Schema** (validated via Zod):
+```typescript
+{
+  reason: string; // Non-empty, max 500 characters (reason for early exit)
+  callerAddress: string; // Valid 56-character Stellar public key
+}
 ```
+
+**Body Validation Errors**:
+
+- `reason` missing or empty: `400 VALIDATION_ERROR`
+- `reason` > 500 characters: `400 VALIDATION_ERROR`
+- `callerAddress` missing: `400 VALIDATION_ERROR`
+- `callerAddress` not a valid Stellar address: `400 VALIDATION_ERROR`
+
+### Response
+
+**Success (200 OK)**:
+```json
+{
+  "success": true,
+  "data": {
+    "exitAmount": "950.00", // Amount returned to owner
+    "penaltyAmount": "50.00", // Penalty deducted
+    "finalStatus": "EARLY_EXIT", // Updated commitment status
+    "txHash": "abc123...", // Transaction hash (if on-chain)
+    "reference": null // Reference for mock mode
+  },
+  "meta": {
+    "correlationId": "...",
+    "timestamp": "2026-05-27T10:00:00Z"
+  }
+}
+```
+
+**Errors**:
+
+| Status | Code                     | Meaning                                                                 |
+| ------ | ------------------------ | ----------------------------------------------------------------------- |
+| 400    | `VALIDATION_ERROR`       | Invalid request body (missing/malformed fields)                         |
+| 401    | `UNAUTHORIZED`           | No valid session token                                                  |
+| 403    | `FORBIDDEN`              | Session address ≠ callerAddress OR caller doesn't own commitment        |
+| 404    | `NOT_FOUND`              | Commitment does not exist                                               |
+| 409    | `CONFLICT`               | Commitment status prevents early exit (already settled/violated/exited) |
+| 429    | `TOO_MANY_REQUESTS`      | Rate limit exceeded                                                     |
+| 502    | `BLOCKCHAIN_CALL_FAILED` | Blockchain RPC call failed                                              |
+| 504    | `GATEWAY_TIMEOUT`        | Blockchain operation timed out                                          |
+
+Contract-service failures are normalized before they are returned, so clients always receive the standard `{ success: false, error: ... }` envelope with stable status codes.
+
+**Error Response Example** (403 Forbidden):
 
 ```json
 {
-  "message": "Stub early-exit endpoint for commitment abc123",
-  "commitmentId": "abc123"
+  "success": false,
+  "error": {
+    "code": "FORBIDDEN",
+    "message": "You do not own this commitment and cannot exit it early.",
+    "correlationId": "...",
+    "timestamp": "2026-05-27T10:00:00Z"
+  }
 }
 ```
+
+### Example
+
+**Request**:
+
+```bash
+curl -X POST http://localhost:3000/api/commitments/cm_123456/early-exit \
+     -H 'Content-Type: application/json' \
+     -H 'Cookie: session=valid-token-abc123' \
+     -d '{
+       "reason": "Need liquidity for unexpected investment",
+       "callerAddress": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+     }'
+```
+
+**Success Response** (200):
+
+```json
+{
+  "success": true,
+  "data": {
+    "exitAmount": "950",
+    "penaltyAmount": "50",
+    "finalStatus": "EARLY_EXIT",
+    "txHash": "abc123def456",
+    "reference": null
+  },
+  "meta": {
+    "correlationId": "xyz789",
+    "timestamp": "2026-05-27T10:00:00Z"
+  }
+}
+```
+
+**Ownership Violation** (403):
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "FORBIDDEN",
+    "message": "You do not own this commitment and cannot exit it early.",
+    "correlationId": "xyz789",
+    "timestamp": "2026-05-27T10:00:00Z"
+  }
+}
+```
+
+### Implementation Notes
+
+- **Input Validation**: Request body is validated against `EarlyExitRequestBodySchema`
+  (Zod) before processing.
+- **Ownership Verification**: After authentication, the route fetches the commitment
+  from chain and verifies the owner matches the authenticated caller.
+- **Contract Interaction**: Calls `earlyExitCommitmentOnChain()` which:
+  - Checks commitment status (must be ACTIVE, not SETTLED/VIOLATED/EARLY_EXIT).
+  - Submits transaction to Soroban contract.
+  - Returns penalty and exit amounts.
+- **Error Mapping**: Contract errors are normalized via `normalizeBackendError()`
+  to ensure consistent error codes and messages.
+- **Rate Limiting**: All requests are subject to per-IP rate limiting
+  (`api/commitments/early-exit`).
 
 ---
 
@@ -279,11 +407,11 @@ curl 'http://localhost:3000/api/attestations/recent?ownerAddress=GAAA...WHF' \
 
 ## `POST /api/attestations`
 
-Records an attestation event.  Stub implementation logs
+Records an attestation event. Stub implementation logs
 `AttestationReceived`.
 
 - **Request body**: JSON describing the attestation (e.g. signature,
-commitmentId).
+  commitmentId).
 - **Response**: stub message with requester IP.
 
 ### Example
@@ -434,7 +562,7 @@ data: {"commitmentId":"abc123","status":"Settled","timestamp":"2026-05-27T01:30:
 Simple health/metrics endpoint used by monitoring tools.
 
 - **Response**: JSON object containing uptime, mock request/error counts, and
-current timestamp.
+  current timestamp.
 
 ### Example
 
@@ -455,5 +583,7 @@ curl http://localhost:3000/api/metrics
 ---
 
 > 🔧 _This reference will grow as the backend implements real business logic._
+
+```
 
 ```
