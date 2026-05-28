@@ -73,6 +73,9 @@ create_commitment ──► fund_escrow ──► release            (matured: p
 | `get_commitment(commitment_id)` | Read a single commitment record. |
 | `get_owner_commitments(owner)` | List commitment ids owned by an address. |
 | `get_attestations(commitment_id)` | Retrieve the timeline of `AttestationRecord`s for a commitment. |
+| `refund_partial(commitment_id, amount)` | Partial early-exit: withdraw `amount` from the principal, apply the proportional penalty to that portion, keep the remainder escrowed. |
+| `set_violation_threshold(threshold)` | Admin-only. Set the compliance score threshold (0–100) below which a funded commitment is auto-violated. 0 disables auto-violation. |
+| `get_violation_threshold()` | Read the current violation threshold. |
 
 ### Attestation History
 
@@ -208,13 +211,59 @@ The dispute record is persisted on-chain and can be read at any time via
 `get_dispute(commitment_id)`, even after the dispute is resolved. This enables
 auditing, analytics, and off-chain verification of dispute history.
 
+### Partial early-exit (`refund_partial`)
+
+`refund_partial(commitment_id, amount)` lets an owner exit a fraction of their
+locked principal before maturity. Only the withdrawn portion is penalised;
+the remainder stays escrowed under the same commitment.
+
+- `amount` must be > 0 and ≤ `Commitment.amount`.
+- `penalty_bps` is applied only to `amount`: `penalty = amount * penalty_bps / 10_000`.
+- `Commitment.amount` is reduced by `amount` in storage.
+- If `amount` equals the full stored principal the commitment transitions to
+  `Refunded`; otherwise it stays `Funded`.
+- Blocked when the commitment is in `Violated` status (`CommitmentViolated` error).
+
+```
+refund_partial(id, 400)   # withdraw 400 out of 1 000 at 10% penalty
+  → net to owner: 360, fee: 40, remaining escrowed: 600 (status: Funded)
+
+refund_partial(id, 1000)  # withdraw all remaining principal
+  → net to owner: 950, fee: 50, remaining: 0 (status: Refunded)
+```
+
+### Violation auto-trigger
+
+A configurable compliance score threshold controls automatic violation of funded
+commitments. When `record_attestation` records a score **strictly below** the
+threshold for a `Funded` commitment, the status transitions to `Violated` and
+a `commitment_violated` event is emitted.
+
+- `set_violation_threshold(threshold)` — admin-only, clamps to 0–100. A value
+  of `0` (default) disables auto-violation entirely.
+- `get_violation_threshold()` — public read of the current threshold.
+- `release`, `refund`, and `refund_partial` all return `CommitmentViolated`
+  while the commitment is in the `Violated` state.
+- A score **equal to** the threshold does **not** trigger a violation; only
+  scores **strictly below** do.
+- Auto-violation only applies to `Funded` commitments. Attestations on
+  `Created`, `Released`, `Refunded`, or `Disputed` commitments are recorded but
+  do not change status.
+
+```
+set_violation_threshold(60)   # violate when score < 60
+record_attestation(id, 59)    # → status: Violated, event emitted
+record_attestation(id, 60)    # → status unchanged (Funded)
+```
+
 ### Errors
 
 Stable numeric error codes (`#[contracterror]`) are surfaced so the backend
 `normalizeContractError` mapper can translate them into HTTP responses:
 `AlreadyInitialized`, `NotInitialized`, `NotFound`, `Unauthorized`,
 `InvalidAmount`, `InvalidState`, `NotMatured`, `InvalidDuration`,
-`PenaltyTooHigh`, `Paused`.
+`PenaltyTooHigh`, `Paused`, `AssetMismatch`, `InsufficientYieldPool`,
+`InvalidWasmHash`, `CommitmentViolated`.
 
 ## Build & test
 
