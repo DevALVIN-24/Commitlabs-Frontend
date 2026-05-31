@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { StrKey } from "@stellar/stellar-sdk";
 import { PARAMETER_BOUNDS, SUPPORTED_ASSETS } from "./config";
+import { ValidationError } from "./errors";
 
 // ─── Warning types ────────────────────────────────────────────────────────────
 
@@ -46,6 +47,58 @@ const ResolveDisputeSchema = z.object({
 export { DisputeReasonSchema, ResolveDisputeSchema };
 export type DisputeReasonInput = z.infer<typeof DisputeReasonSchema>;
 export type ResolveDisputeInput = z.infer<typeof ResolveDisputeSchema>;
+export interface PaginationParams {
+  page: number;
+  limit: number;
+}
+
+export type FilterParams = Record<string, string | number | boolean>;
+
+const addressSchema = z
+  .string()
+  .trim()
+  .refine((addr) => StrKey.isValidEd25519PublicKey(addr), {
+    message: "Must be a valid Stellar address (G... format).",
+  });
+
+const amountSchema = z.coerce
+  .number()
+  .positive("Amount must be a positive number");
+
+const paginationSchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(10),
+});
+
+const supportedAssetCodes = SUPPORTED_ASSETS.map((asset) => asset.code);
+
+export const createCommitmentSchema = z.object({
+  ownerAddress: addressSchema,
+  asset: z
+    .string()
+    .trim()
+    .transform((asset) => asset.toUpperCase())
+    .refine((asset) => supportedAssetCodes.includes(asset), {
+      message: `Asset is not supported. Supported assets: ${supportedAssetCodes.join(", ")}.`,
+    }),
+  amount: amountSchema,
+  durationDays: z.coerce
+    .number()
+    .int()
+    .min(PARAMETER_BOUNDS.durationDays.min)
+    .max(PARAMETER_BOUNDS.durationDays.max),
+  maxLossBps: z.coerce.number().min(0),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
+export const createMarketplaceListingSchema = z.object({
+  title: z.string().trim().min(1, "Title is required"),
+  description: z.string().trim().optional(),
+  price: amountSchema,
+  category: z.string().trim().min(1, "Category is required"),
+  sellerAddress: addressSchema,
+});
+
 export const createAttestationSchema = z.object({
   commitmentId: z.string().min(1, "Commitment ID is required"),
   attesterAddress: addressSchema,
@@ -303,12 +356,7 @@ export function validateSupportedAsset(
  * @example
  * z.object({ ownerAddress: stellarAddressSchema })
  */
-export const stellarAddressSchema = z
-  .string()
-  .trim()
-  .refine((addr) => StrKey.isValidEd25519PublicKey(addr), {
-    message: "Must be a valid Stellar address (G... format).",
-  });
+export { addressSchema as stellarAddressSchema };
 
 // Validate amount (positive number, can be string or number)
 export function validateAmount(amount: string | number): number {
