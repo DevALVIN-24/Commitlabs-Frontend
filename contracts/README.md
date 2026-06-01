@@ -92,6 +92,8 @@ create_commitment ──► fund_escrow ──► release            (matured: p
 | `unpause()` | Admin-only resume for paused contract writes. |
 | `is_paused()` | Read the current paused state. |
 | `get_commitment(commitment_id)` | Read a single commitment record. |
+| `get_user_commitments(owner)` | Read up to `MAX_USER_COMMITMENTS_READ` full `Commitment` records for `owner`. This is the primary backend read path and is intentionally bounded to keep Soroban read responses within practical limits. |
+| `get_user_commitment_ids(owner)` | Read all commitment ids for `owner`. The backend uses this as its fallback path when it needs to hydrate records one by one. |
 | `get_owner_commitments(owner)` | List commitment ids owned by an address. |
 | `get_attestations(commitment_id)` | Retrieve the timeline of `AttestationRecord`s for a commitment. |
 | `refund_partial(commitment_id, amount)` | Partial early-exit: withdraw `amount` from the principal, apply the proportional penalty to that portion, keep the remainder escrowed. |
@@ -101,6 +103,12 @@ create_commitment ──► fund_escrow ──► release            (matured: p
 ### Attestation History
 
 Compliance scores recorded via `record_attestation` are appended to an on-chain historical log. This allows clients to query the timeline of scores for a given commitment rather than just reading the latest value. Use `get_attestations` to retrieve a list of `AttestationRecord` structures, each containing the attestor address, the compliance score, and the timestamp.
+
+### User commitment readers
+
+The backend first tries `get_user_commitments(owner)` so it can read a user's commitments in one typed call. That reader now returns full `Commitment` records directly from the owner index and intentionally caps the response size with `MAX_USER_COMMITMENTS_READ` to avoid oversized Soroban read payloads.
+
+For compatibility and fallback hydration, the contract also keeps an id-only reader at `get_user_commitment_ids(owner)`. The older `get_owner_commitments(owner)` name remains available as a legacy alias for the same owner index.
 
 ### `early_exit_commitment` entrypoint details
 

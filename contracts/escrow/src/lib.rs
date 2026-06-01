@@ -18,7 +18,8 @@
 //! `fund_escrow`, `release`, `refund`, and `dispute`.
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, Address, BytesN, Env, String, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, Address, BytesN, Env, Map, String,
+    Symbol, Vec,
 };
 
 // Configuration constants for escrow contract
@@ -36,6 +37,10 @@ const MAX_DURATION_DAYS: u32 = 365;
 
 /// Upper bound for penalty basis points (10_000 = 100%).
 const MAX_PENALTY_BPS: u32 = 10_000;
+
+/// Bound full-record owner reads so a single query does not exceed Soroban
+/// simulation/result size limits.
+const MAX_USER_COMMITMENTS_READ: u32 = 100;
 
 /// Storage keys for persistent contract state.
 #[contracttype]
@@ -962,6 +967,8 @@ impl EscrowContract {
         );
 
         Ok(())
+    }
+
     /// Return the list of attestation history for a commitment id.
     pub fn get_attestations(env: Env, commitment_id: u64) -> Vec<AttestationRecord> {
         env.storage()
@@ -970,12 +977,40 @@ impl EscrowContract {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
+    /// Return full commitment records for a user.
+    ///
+    /// This is the backend's primary read path. The result is intentionally
+    /// bounded so a single read stays within Soroban RPC payload limits.
+    pub fn get_user_commitments(env: Env, owner: Address) -> Vec<Commitment> {
+        let ids = Self::owner_commitment_ids(&env, owner);
+        let mut commitments = Vec::new(&env);
+        let limit = ids.len().min(MAX_USER_COMMITMENTS_READ);
+        let mut index = 0;
+
+        while index < limit {
+            let commitment_id = ids.get(index).unwrap();
+            if let Some(commitment) = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Commitment(commitment_id))
+            {
+                commitments.push_back(commitment);
+            }
+            index += 1;
+        }
+
+        commitments
+    }
+
+    /// Return the list of commitment ids owned by an address using the backend's
+    /// fallback reader name.
+    pub fn get_user_commitment_ids(env: Env, owner: Address) -> Vec<u64> {
+        Self::owner_commitment_ids(&env, owner)
+    }
+
     /// Return the list of commitment ids owned by an address.
     pub fn get_owner_commitments(env: Env, owner: Address) -> Vec<u64> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::OwnerIndex(owner))
-            .unwrap_or_else(|| Vec::new(&env))
+        Self::owner_commitment_ids(&env, owner)
     }
 
     /// Retrieve the dispute record for a commitment. Returns `None` if no
@@ -1152,6 +1187,13 @@ impl EscrowContract {
         env.storage()
             .persistent()
             .set(&DataKey::OwnerIndex(owner.clone()), &ids);
+    }
+
+    fn owner_commitment_ids(env: &Env, owner: Address) -> Vec<u64> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::OwnerIndex(owner))
+            .unwrap_or_else(|| Vec::new(env))
     }
 
     /// Remove `id` from `owner`'s OwnerIndex list.
