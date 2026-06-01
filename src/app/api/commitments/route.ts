@@ -101,11 +101,6 @@ export const POST = withApiHandler(async (req: NextRequest, _context, correlatio
   if (!ownerAddress || typeof ownerAddress !== "string") {
     return fail("BAD_REQUEST", "Invalid ownerAddress", undefined, 400, correlationId);
   }
-  try {
-    validateStellarAddress(ownerAddress, "ownerAddress");
-  } catch {
-    throw new ValidationError("Invalid ownerAddress: must be a valid Stellar address (G... format).");
-  }
   if (!asset || typeof asset !== "string") {
     return fail("BAD_REQUEST", "Invalid asset", undefined, 400, correlationId);
   }
@@ -123,7 +118,6 @@ export const POST = withApiHandler(async (req: NextRequest, _context, correlatio
   if (maxLossBps == null || maxLossBps < 0) {
     return fail("BAD_REQUEST", "Invalid maxLossBps", undefined, 400, correlationId);
   }
-
   const result = await createCommitmentOnChain({
     ownerAddress,
     asset,
