@@ -6,6 +6,7 @@ This document details the architectural design of the CommitLabs Frontend applic
 
 The application follows a standard **Next.js App Router** architecture, leveraging Server Components for static rendering and Client Components for interactivity.
 
+
 ### Component Diagram
 
 ```mermaid
